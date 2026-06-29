@@ -49,6 +49,7 @@ concurrency:
 
 jobs:
   detect-changes:
+    if: github.event_name == 'pull_request'
     name: "Detect changed stacks"
     runs-on: ubuntu-latest
     outputs:
