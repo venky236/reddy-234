@@ -99,7 +99,7 @@ jobs:
   plan:
     name: "Plan"
     needs: detect-changes
-    if: github.event_name == 'workflow_dispatch' && needs.detect-changes.outputs.has_changes == 'true'
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.has_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -120,22 +120,18 @@ jobs:
 
   apply:
     name: "Apply"
-    needs: detect-changes
-    if: github.event_name == 'push' && needs.detect-changes.outputs.has_changes == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+
+    if: github.event_name == 'workflow_dispatch'
+
     uses: ./.github/workflows/terraform-reusable-apply.yml
+
     with:
-      stack: ${{ matrix.stack }}
-      env: ${{ matrix.env }}
-      acct: ${{ matrix.acct }}
+      stack: ${{ inputs.stack }}
+      env: ${{ inputs.env }}
+      acct: ${{ inputs.acct }}
+
     secrets:
       NONPROD_AWS_ACCESS_KEY_ID: ${{ secrets.PWC_AUP_DEV_TERRAFORM_USER_KEY_ID }}
       NONPROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PWC_AUP_DEV_TERRAFORM_USER_SECRET_ACCESS_KEY }}
-      # TODO: uncomment when prod secrets are added to the repo
-      # PROD_AWS_ACCESS_KEY_ID: ${{ secrets.PWC_AUP_PROD_TERRAFORM_USER_KEY_ID }}
-      # PROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PWC_AUP_PROD_TERRAFORM_USER_SECRET_ACCESS_KEY }}
       AMPLIWORK_PKG_READER_APP_ID: ${{ secrets.AMPLIWORK_PKG_READER_APP_ID }}
       AMPLIWORK_PKG_READER_PRIVATE_KEY: ${{ secrets.AMPLIWORK_PKG_READER_PRIVATE_KEY }}
