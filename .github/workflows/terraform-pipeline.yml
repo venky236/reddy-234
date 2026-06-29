@@ -15,6 +15,33 @@ on:
       - "!integration-user/environments/prod.tfvars"
 
   workflow_dispatch:
+    inputs:
+      stack:
+        description: "Terraform stack"
+        required: true
+        type: choice
+        options:
+          - base
+          - clay
+          - kiln-trace
+          - integration-user
+
+      env:
+        description: "Environment"
+        required: true
+        type: choice
+        options:
+          - qa
+          - staging
+
+      acct:
+        description: "AWS Account"
+        required: true
+        type: choice
+        options:
+          - nonprod
+          - prod
+    
 
 concurrency:
   group: terraform-pipeline-${{ github.ref }}
