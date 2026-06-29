@@ -1,0 +1,114 @@
+name: "Terraform Pipeline for pwc-aup-infra"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "base/environments/*.tfvars"
+      - "clay/environments/*.tfvars"
+      - "kiln-trace/environments/*.tfvars"
+      - "integration-user/environments/*.tfvars"
+      # Exclude prod until prod secrets are configured
+      - "!base/environments/prod.tfvars"
+      - "!clay/environments/prod.tfvars"
+      - "!kiln-trace/environments/prod.tfvars"
+      - "!integration-user/environments/prod.tfvars"
+
+  workflow_dispatch:
+
+concurrency:
+  group: terraform-pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  detect-changes:
+    name: "Detect changed stacks"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.changed.outputs.matrix }}
+      has_changes: ${{ steps.changed.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed stacks
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          # Guard against zero SHA (first push to a new branch)
+          if [[ "$BASE" == "0000000000000000000000000000000000000000" || -z "$BASE" ]]; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+
+          # Only look at changed tfvars files. The env and stack are derived
+          # directly from the file path: <stack>/environments/<env>.tfvars
+          # Each unique stack+env pair becomes one matrix entry.
+          MATRIX=$(git diff --name-only "$BASE" HEAD \
+            | grep -E '^(base|clay|kiln-trace|integration-user)/environments/[^/]+\.tfvars$' \
+            | awk -F'/' '{
+                stack = $1
+                env   = $3
+                sub(/\.tfvars$/, "", env)
+                acct  = (env == "prod") ? "prod" : "nonprod"
+                printf "{\"stack\":\"%s\",\"env\":\"%s\",\"acct\":\"%s\"}\n", stack, env, acct
+              }' \
+            | sort -u \
+            | jq -sc '.')
+
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
+          if [ "$MATRIX" = "[]" ] || [ -z "$MATRIX" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  plan:
+    name: "Plan"
+    needs: detect-changes
+    if: github.event_name == 'workflow_dispatch' && needs.detect-changes.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    uses: ./.github/workflows/terraform-reusable-plan.yml
+    with:
+      stack: ${{ matrix.stack }}
+      env: ${{ matrix.env }}
+      acct: ${{ matrix.acct }}
+    secrets:
+      NONPROD_AWS_ACCESS_KEY_ID: ${{ secrets.PWC_AUP_DEV_TERRAFORM_USER_KEY_ID }}
+      NONPROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PWC_AUP_DEV_TERRAFORM_USER_SECRET_ACCESS_KEY }}
+      # TODO: uncomment when prod secrets are added to the repo
+      # PROD_AWS_ACCESS_KEY_ID: ${{ secrets.PWC_AUP_PROD_TERRAFORM_USER_KEY_ID }}
+      # PROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PWC_AUP_PROD_TERRAFORM_USER_SECRET_ACCESS_KEY }}
+      AMPLIWORK_PKG_READER_APP_ID: ${{ secrets.AMPLIWORK_PKG_READER_APP_ID }}
+      AMPLIWORK_PKG_READER_PRIVATE_KEY: ${{ secrets.AMPLIWORK_PKG_READER_PRIVATE_KEY }}
+
+  apply:
+    name: "Apply"
+    needs: detect-changes
+    if: github.event_name == 'push' && needs.detect-changes.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    uses: ./.github/workflows/terraform-reusable-apply.yml
+    with:
+      stack: ${{ matrix.stack }}
+      env: ${{ matrix.env }}
+      acct: ${{ matrix.acct }}
+    secrets:
+      NONPROD_AWS_ACCESS_KEY_ID: ${{ secrets.PWC_AUP_DEV_TERRAFORM_USER_KEY_ID }}
+      NONPROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PWC_AUP_DEV_TERRAFORM_USER_SECRET_ACCESS_KEY }}
+      # TODO: uncomment when prod secrets are added to the repo
+      # PROD_AWS_ACCESS_KEY_ID: ${{ secrets.PWC_AUP_PROD_TERRAFORM_USER_KEY_ID }}
+      # PROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PWC_AUP_PROD_TERRAFORM_USER_SECRET_ACCESS_KEY }}
+      AMPLIWORK_PKG_READER_APP_ID: ${{ secrets.AMPLIWORK_PKG_READER_APP_ID }}
+      AMPLIWORK_PKG_READER_PRIVATE_KEY: ${{ secrets.AMPLIWORK_PKG_READER_PRIVATE_KEY }}
